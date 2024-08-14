@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, auto
 from typing import Optional, Callable, Any
 
 from koradserial import KoradSerial, OutputPair, DisconnectedError, CommunicationError
@@ -7,12 +7,19 @@ from queue import Queue, Empty
 
 
 class Cmd(Enum):
-  STOP = 0
-  READ_SETTINGS = 1
-  READ_OUTPUT = 2
-  WRITE_ALL = 3
-  WRITE_SETPOINT = 4
-  WRITE_LOCK = 5
+  STOP = auto()
+  READ = auto()
+  WRITE = auto()
+
+
+class CmdOption(Enum):
+  SETPOINT = auto()
+  OUTPUT_READING = auto()
+  LOCK = auto()
+  STATUS = auto()
+
+
+CmdOptions = set[CmdOption]
 
 
 class Event(Enum):
@@ -29,13 +36,13 @@ class PowerSupplyCtrl:
     self.voltage_output = 0.0
     self.current_output = 0.0
     self.lock = False  # cannot be read from PS
-    self.beep = False
+    self.beep = False  # supported removed
     self.ocp = False
     self.ovp = False
     self.output = False
 
     self._ps_ctl = ps_ctl
-    self._cmd_queue: Queue[Cmd] = Queue()
+    self._cmd_queue: Queue[tuple[Cmd, CmdOptions]] = Queue()
     self._event_queue: Queue[tuple[Event, Any]] = Queue()
     self._data_queue: Queue[OutputPair] = Queue()
     self._thread: Optional[Thread] = None
@@ -45,29 +52,26 @@ class PowerSupplyCtrl:
   def _thread_main(self):
     while True:
       if self.stream_output:
-        self._call_error_handle(self._read_output)
+        self._call_error_handle(self._read, {CmdOption.OUTPUT_READING})
         self._data_queue.put((self.voltage_output, self.current_output))
 
       try:
-        cmd = self._cmd_queue.get(timeout=0.01)
+        cmd, options = self._cmd_queue.get(timeout=0.01)
       except Empty:
         continue
-      print(f"{cmd.name}")
+      print(f"{cmd.name} - {[opt.name for opt in options]}")
       if cmd is Cmd.STOP:
         return
 
       self._pending = True
 
       func = {
-        Cmd.READ_SETTINGS: self._read_settings,
-        Cmd.READ_OUTPUT: self._read_output,
-        Cmd.WRITE_SETPOINT: self._write_setpoint,
-        Cmd.WRITE_LOCK: self._write_lock,
-        Cmd.WRITE_ALL: self._write_all
+        Cmd.READ: self._read,
+        Cmd.WRITE: self._write,
       }[cmd]
-      self._call_error_handle(func, set_pending=True)
+      self._call_error_handle(func, options, set_pending=True)
 
-      if cmd in [Cmd.READ_OUTPUT, Cmd.READ_SETTINGS]:
+      if cmd is Cmd.READ:
         self._event_queue.put((Event.READ_FINISHED, None))
 
       self._cmd_queue.task_done()
@@ -84,7 +88,7 @@ class PowerSupplyCtrl:
       return
     self._closed = True
     if self._thread is not None:
-      self._cmd_queue.put(Cmd.STOP)
+      self._cmd_queue.put((Cmd.STOP, set()))
       self._thread.join()
       self._thread = None
     self._ps_ctl.close()
@@ -105,47 +109,42 @@ class PowerSupplyCtrl:
       return None
 
   def read_output(self):
-    self._cmd_queue.put(Cmd.READ_OUTPUT)
+    self._cmd_queue.put((Cmd.READ, {CmdOption.OUTPUT_READING}))
 
   def read_settings(self):
-    self._cmd_queue.put(Cmd.READ_SETTINGS)
+    self._cmd_queue.put((Cmd.READ, {CmdOption.SETPOINT, CmdOption.STATUS}))
 
   def write_setpoint(self):
-    self._cmd_queue.put(Cmd.WRITE_SETPOINT)
+    self._cmd_queue.put((Cmd.WRITE, {CmdOption.SETPOINT}))
 
-  def write_lock(self):
-    self._cmd_queue.put(Cmd.WRITE_LOCK)
+  def write_custom(self, options: CmdOptions):
+    self._cmd_queue.put((Cmd.WRITE, options))
 
   def write_all(self):
-    self._cmd_queue.put(Cmd.WRITE_ALL)
+    self._cmd_queue.put((Cmd.WRITE, {CmdOption.SETPOINT, CmdOption.LOCK, CmdOption.STATUS}))
 
-  def _read_output(self):
-    self.voltage_output, self.current_output = self._ps_ctl.channels[0].output_pair
+  def _read(self, options: CmdOptions):
+    if CmdOption.STATUS in options:
+      status = self._ps_ctl.status
+      self.ocp = status.ocp
+      self.ovp = status.ovp
+      self.output = status.output
+    if CmdOption.SETPOINT in options:
+      self.voltage = self._ps_ctl.channels[0].voltage
+      self.current = self._ps_ctl.channels[0].current
+    if CmdOption.OUTPUT_READING in options:
+      self.voltage_output, self.current_output = self._ps_ctl.channels[0].output_pair
 
-  def _read_settings(self):
-    self.voltage = self._ps_ctl.channels[0].voltage
-    self.current = self._ps_ctl.channels[0].current
-    status = self._ps_ctl.status
-    self.beep = status.beep
-    self.ocp = status.ocp
-    self.ovp = status.ovp
-    self.output = status.output
-
-  def _write_setpoint(self):
-    self._ps_ctl.channels[0].voltage = self.voltage
-    self._ps_ctl.channels[0].current = self.current
-
-  def _write_lock(self):
-    self._ps_ctl.lock.set(self.lock)
-
-  def _write_all(self):
-    self._write_setpoint()
-    self._write_lock()
-
-    # self._ps_ctl.beep.set(self.beep)  not needed
-    self._ps_ctl.ocp.set(self.ocp)
-    self._ps_ctl.ovp.set(self.ovp)
-    self._ps_ctl.output.set(self.output)
+  def _write(self, options):
+    if CmdOption.STATUS in options:
+      self._ps_ctl.ocp.set(self.ocp)
+      self._ps_ctl.ovp.set(self.ovp)
+      self._ps_ctl.output.set(self.output)
+    if CmdOption.LOCK in options:
+      self._ps_ctl.lock.set(self.lock)
+    if CmdOption.SETPOINT in options:
+      self._ps_ctl.channels[0].voltage = self.voltage
+      self._ps_ctl.channels[0].current = self.current
 
   @property
   def closed(self):
@@ -155,11 +154,11 @@ class PowerSupplyCtrl:
   def pending(self):
     return self._pending
 
-  def _call_error_handle(self, func: Callable, set_pending: bool = False):
+  def _call_error_handle(self, func: Callable, options, set_pending: bool = False):
     if set_pending:
       self._pending = True
     try:
-      func()
+      func(options)
     except DisconnectedError as e:
       self._event_queue.put((Event.DISCONNECTED, e))
     except CommunicationError as e:

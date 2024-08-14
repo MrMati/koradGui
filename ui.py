@@ -1,9 +1,10 @@
+import time
 from typing import Optional, Any
 
 import numpy as np
 from imgui_bundle import immapp, implot, hello_imgui, imgui, ImVec2, ImVec4
 
-from control import PowerSupplyCtrl, Event
+from control import PowerSupplyCtrl, Event, CmdOption
 from koradserial import KoradSerial
 from utils import is_in_area, ScrollingBuffer
 import widgets
@@ -128,6 +129,7 @@ class KoradGui:
     self.auto_set = False
     self.ocp_auto_set = False
     self.ovp_auto_set = False
+    self.output_last_set = -1
 
     self.big_font: Optional[imgui.ImFont] = None
     self.bigger_font: Optional[imgui.ImFont] = None
@@ -177,6 +179,7 @@ class KoradGui:
     if widgets.text_sized_button("OFF" if output else "ON", "OFF", center=True, offset=self.mid_offset):
       self.ctrl.output = not output
       self.ctrl.write_all()
+      self.output_last_set = time.time()
 
     imgui.push_style_var(imgui.StyleVar_.disabled_alpha, 1.0 if self.connected else 0.6)
 
@@ -262,6 +265,8 @@ class KoradGui:
     if self.connected and (event := self.ctrl.read_event()):
       self.callback(*event)
 
+    self.prot_auto_set()
+
     self.connect_ui()
 
     imgui.push_style_var(imgui.StyleVar_.disabled_alpha, 1.0 if self.connected else 0.6)  # type: ignore
@@ -282,6 +287,17 @@ class KoradGui:
     elif event is Event.DISCONNECTED:
       self.device_disconnect()
 
+  def prot_auto_set(self):
+    if self.output_last_set > 0 and time.time() - self.output_last_set > 1:
+      if self.ctrl.output:
+        self.ctrl.ocp = self.ocp_auto_set
+        self.ctrl.ovp = self.ovp_auto_set
+      else:
+        self.ctrl.ovp = self.ctrl.ocp = False
+      self.ctrl.write_custom({CmdOption.STATUS})
+      self.output_last_set = -1
+
+
   @property
   def connected(self) -> bool:
     return self.ctrl is not None
@@ -290,7 +306,9 @@ class KoradGui:
     self.ctrl = PowerSupplyCtrl(None if 0 else KoradSerial(self.ports[self.sel_port_idx]))
     self.ctrl.start()
     self.ctrl.lock = True
-    self.ctrl.write_lock()
+    self.ctrl.ocp = False
+    self.ctrl.ovp = False
+    self.ctrl.write_custom({CmdOption.LOCK, CmdOption.STATUS})
     self.ctrl.read_settings()
     self.ctrl.stream_output = True
 
