@@ -8,6 +8,9 @@ It should be compatible with all KA3xxxP, but has been tested only with KA3005P.
 > This program directly affects the circuit connected to the controlled power supply and can cause damage.
 >** Use at your own risk.**
 
+
+![screenshot](docs/screenshot.png)
+
 # Details
 
 GUI is built with Dear ImGui via imgui_bundle bindings.
