@@ -1,3 +1,4 @@
+.idea
 build
-dll_crap
 koradGui.ini
+__pycache__

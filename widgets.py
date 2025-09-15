@@ -103,7 +103,7 @@ class SpinBox:
         imgui.text(".")
         dot_offset = dot_width
 
-      if imgui.get_current_context().current_item_flags & imgui.internal.ItemFlags_.disabled.value:
+      if imgui.get_current_context().current_item_flags & imgui.internal.ItemFlagsPrivate_.disabled.value:
         continue
 
       mouse_pos = imgui.get_mouse_pos()

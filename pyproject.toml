@@ -1,0 +1,11 @@
+[project]
+name = "koradgui"
+version = "0.1.0"
+description = "Decent GUI for Korad power supplies"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cx-freeze>=8.4.0",
+    "imgui-bundle==1.6.0",
+    "pyserial>=3.5",
+]

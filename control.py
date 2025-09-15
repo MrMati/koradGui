@@ -136,15 +136,17 @@ class PowerSupplyCtrl:
       self.voltage_output, self.current_output = self._ps_ctl.channels[0].output_pair
 
   def _write(self, options):
-    if CmdOption.STATUS in options:
-      self._ps_ctl.ocp.set(self.ocp)
-      self._ps_ctl.ovp.set(self.ovp)
-      self._ps_ctl.output.set(self.output)
     if CmdOption.LOCK in options:
       self._ps_ctl.lock.set(self.lock)
     if CmdOption.SETPOINT in options:
       self._ps_ctl.channels[0].voltage = self.voltage
       self._ps_ctl.channels[0].current = self.current
+    if CmdOption.STATUS in options:
+      self._ps_ctl.ocp.set(self.ocp)
+      self._ps_ctl.ovp.set(self.ovp)
+      self._ps_ctl.output.set(self.output)
+
+
 
   @property
   def closed(self):
