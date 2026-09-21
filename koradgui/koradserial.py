@@ -270,7 +270,10 @@ class KoradSerial(object):
       self.port = serial.Serial(port, 9600, timeout=1)
 
     def read_byte(self):
-      c = self.port.read(1)
+      try:
+        c = self.port.read(1)
+      except SerialException:
+        raise DisconnectedError()
       if self.debug:
         if len(c) > 0:
           print("read: {0}".format(hex(c[0])))
@@ -281,6 +284,8 @@ class KoradSerial(object):
     def read_character(self):
       try:
         c = self.port.read(1).decode('ascii')
+      except SerialException:
+        raise DisconnectedError()
       except UnicodeDecodeError:
         raise ValueError()
       if self.debug:
@@ -382,7 +387,10 @@ class KoradSerial(object):
 
   def close(self):
     """ Close the serial port """
-    self.__serial.port.close()
+    try:
+      self.__serial.port.close()
+    except SerialException:
+      pass
 
   def open(self):
     """ Open the serial port """

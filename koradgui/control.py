@@ -2,6 +2,7 @@ from enum import Enum, auto
 from typing import Optional, Callable, Any
 
 from .koradserial import KoradSerial, OutputPair, DisconnectedError, CommunicationError
+from serial.serialutil import SerialException
 from threading import Thread
 from queue import Queue, Empty
 
@@ -91,7 +92,10 @@ class PowerSupplyCtrl:
       self._cmd_queue.put((Cmd.STOP, set()))
       self._thread.join()
       self._thread = None
-    self._ps_ctl.close()
+    try:
+      self._ps_ctl.close()
+    except SerialException:
+      pass
 
   def read_output_data(self) -> list[OutputPair]:
     data = []
@@ -162,8 +166,10 @@ class PowerSupplyCtrl:
     try:
       func(options)
     except DisconnectedError as e:
+      self.stream_output = False
       self._event_queue.put((Event.DISCONNECTED, e))
     except CommunicationError as e:
+      self.stream_output = False
       self._event_queue.put((Event.DISCONNECTED, e))
     finally:
       if set_pending:

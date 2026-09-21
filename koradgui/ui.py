@@ -187,7 +187,7 @@ class KoradGui:
       self.voltage_input.value = self.ctrl.voltage
       self.current_input.value = self.ctrl.current
     elif event is Event.DISCONNECTED:
-      self.device_disconnect()
+      self.device_disconnect(send_off=False)
 
   def prot_auto_set(self):
     if self.output_last_set > 0 and time.time() - self.output_last_set > 1:
@@ -214,12 +214,13 @@ class KoradGui:
     self.ctrl.read_settings()
     self.ctrl.stream_output = True
 
-  def device_disconnect(self):
+  def device_disconnect(self, send_off: bool = True):
     self.output_last_set = -1
     if self.connected:
-      self.ctrl.lock = False
-      self.ctrl.output = False
-      self.ctrl.write_all()
+      if send_off:
+        self.ctrl.lock = False
+        self.ctrl.output = False
+        self.ctrl.write_all()
       self.ctrl.close()
       self.ctrl = None
 
