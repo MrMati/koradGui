@@ -22,7 +22,7 @@ class KoradGui:
     self.ctrl: Optional[PowerSupplyCtrl] = None
     self.ports = KoradSerial.scan_devices(0x0416, 0x5011)
     self.sel_port_idx = 0 if self.ports else -1
-    self.auto_set = False
+    self.auto_set = True
     self.ocp_auto_set = False
     self.ovp_auto_set = False
     self.output_last_set = -1
