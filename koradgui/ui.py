@@ -121,17 +121,19 @@ class KoradGui:
   def graphs_ui(self):
     def graph(setpoint: float, buffer: ScrollingBuffer, fmt: str = "5.2f", min_y: float = 0):
       if implot.begin_plot("", flags=implot.Flags_.canvas_only):
-        implot.setup_axes("", "", implot.AxisFlags_.no_tick_labels)
+        show_ticks = self.connected and setpoint > 0
+        y_flags = 0 if show_ticks else implot.AxisFlags_.no_tick_labels
+        implot.setup_axes("", "", implot.AxisFlags_.no_tick_labels, y_flags)
 
         max_y = setpoint * 1.2
         implot.setup_axes_limits(self.time - self.graph_zoom, self.time, min_y, max_y, implot.Cond_.always)
-        ticks = list(dict.fromkeys([0, round(max_y / 2, 1), setpoint]))  # remove duplicates
-        ticks = [format(tick, fmt).ljust(6) for tick in ticks]
-        if len(ticks) == 1:
-          ticks.append(ticks[0])  # bugfix
-        n_ticks = len(ticks) if self.connected else 0
-        implot.setup_axis_ticks(
-          implot.ImAxis_.y1, 0.0, setpoint, n_ticks, ticks if n_ticks else None, False)
+        if show_ticks:
+          ticks = list(dict.fromkeys([0, round(max_y / 2, 1), setpoint]))  # remove duplicates
+          ticks = [format(tick, fmt).ljust(6) for tick in ticks]
+          if len(ticks) == 1:
+            ticks.append(ticks[0])  # bugfix
+          implot.setup_axis_ticks(
+            implot.ImAxis_.y1, 0.0, setpoint, len(ticks), ticks, False)
 
         if self.connected and self.ctrl.output:
           implot.tag_y(buffer.last_value, ImVec4(0, 1, 1, 1), format(buffer.last_value, fmt))
