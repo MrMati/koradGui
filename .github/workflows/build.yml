@@ -86,6 +86,7 @@ jobs:
           $stage = "koradgui-$version-windows-x64"
           $src = (Get-ChildItem "build\exe.win-*" | Select-Object -First 1).FullName
           Copy-Item $src $stage -Recurse
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path $stage -DestinationPath "dist\koradgui-$version-windows-x64.zip"
           Remove-Item $stage -Recurse -Force
 
