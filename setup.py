@@ -1,4 +1,8 @@
+import tomllib
 from cx_Freeze import setup, Executable
+
+with open("pyproject.toml", "rb") as f:
+    _version = tomllib.load(f)["project"]["version"]
 
 # Dependencies are automatically detected, but they might need fine-tuning.
 build_exe_options = {
@@ -11,7 +15,7 @@ build_exe_options = {
 
 setup(
     name="koradGui",
-    version="0.1",
+    version=_version,
     description="koradGui",
     options={"build_exe": build_exe_options},
     executables=[Executable("koradgui/main.py", base="gui", target_name="koradGui",
