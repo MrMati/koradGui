@@ -1,7 +1,7 @@
 import time
 
-from koradserial import KoradSerial
-from control import PowerSupplyCtrl
+from .koradserial import KoradSerial
+from .control import PowerSupplyCtrl
 
 cands = KoradSerial.scan_devices(0x0416, 0x5011)
 

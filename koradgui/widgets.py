@@ -1,6 +1,6 @@
 from imgui_bundle import imgui, ImVec2
 
-from utils import is_in_area
+from .utils import is_in_area
 
 
 def text_sized_button(text, size_text, center=False, offset=0):
@@ -17,7 +17,7 @@ def text_sized_button(text, size_text, center=False, offset=0):
 
 
 def switch_button(text, v, size: ImVec2 = ImVec2(0, 0)):
-  imgui.push_style_var(imgui.StyleVar_.alpha, 10.75 if v else 0.75)
+  imgui.push_style_var(imgui.StyleVar_.alpha, 1.0 if v else 0.75)
   nv = imgui.button(text, size)
   imgui.pop_style_var()
 
@@ -103,7 +103,7 @@ class SpinBox:
         imgui.text(".")
         dot_offset = dot_width
 
-      if imgui.get_current_context().current_item_flags & imgui.internal.ItemFlagsPrivate_.disabled.value:
+      if imgui.get_current_context().current_item_flags & imgui.ItemFlags_.disabled.value:
         continue
 
       mouse_pos = imgui.get_mouse_pos()

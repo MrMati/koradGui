@@ -1,7 +1,7 @@
 from enum import Enum, auto
 from typing import Optional, Callable, Any
 
-from koradserial import KoradSerial, OutputPair, DisconnectedError, CommunicationError
+from .koradserial import KoradSerial, OutputPair, DisconnectedError, CommunicationError
 from threading import Thread
 from queue import Queue, Empty
 

@@ -1,0 +1,93 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build single-exec AppImage
+    # Build in manylinux_2_28 so the AppImage runs on any distro with glibc >= 2.28
+    # (matches the imgui-bundle manylinux_2_28 wheels).
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: "1" # appimagetool without FUSE
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Add uv to PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Build AppImage
+        run: uv run python setup.py bdist_appimage
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: koradGui-AppImage
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+      - name: Upload directory build
+        uses: actions/upload-artifact@v4
+        with:
+          name: koradGui-dir
+          path: build/exe.*/
+          if-no-files-found: error
+
+  smoke-test:
+    name: Smoke test build
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x artifacts/koradGui-AppImage/*.AppImage
+          xvfb-run -a timeout 20 artifacts/koradGui-AppImage/*.AppImage --appimage-extract-and-run
+          code=$?
+          # 124 = killed by timeout => app ran fine for 20s; 0 = clean exit
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
+            echo "AppImage failed with exit code $code"
+            exit 1
+          fi
+
+      - name: Smoke test directory build
+        run: |
+          find artifacts/koradGui-dir -name koradGui -exec chmod +x {} \;
+          xvfb-run -a timeout 20 artifacts/koradGui-dir/exe.*/koradGui
+          code=$?
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
+            echo "Directory build failed with exit code $code"
+            exit 1
+          fi
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/koradGui-AppImage/*.AppImage

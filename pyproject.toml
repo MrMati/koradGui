@@ -5,7 +5,15 @@ description = "Decent GUI for Korad power supplies"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "cx-freeze>=8.4.0",
-    "imgui-bundle==1.6.0",
+    "cx-freeze>=8.7.0",
+    "imgui-bundle==1.92.900",
+    "numpy>=2.5.3",
     "pyserial>=3.5",
 ]
+
+[project.scripts]
+koradgui = "koradgui.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

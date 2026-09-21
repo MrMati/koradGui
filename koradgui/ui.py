@@ -1,12 +1,20 @@
+import os
+import sys
 import time
 from typing import Optional, Any
 
 from imgui_bundle import immapp, implot, hello_imgui, imgui, ImVec2, ImVec4
 
-from control import PowerSupplyCtrl, Event, CmdOption
-from koradserial import KoradSerial
-from utils import ScrollingBuffer
-import widgets
+from .control import PowerSupplyCtrl, Event, CmdOption
+from .koradserial import KoradSerial
+from .utils import ScrollingBuffer
+from . import widgets
+
+
+def port_display_name(port: str) -> str:
+  """Shorten e.g. /dev/ttyUSB0 to USB0 for display, leave other names as-is."""
+  prefix = "/dev/tty"
+  return port.removeprefix(prefix) if port.startswith(prefix) else port
 
 
 class KoradGui:
@@ -36,12 +44,12 @@ class KoradGui:
     imgui.set_next_item_width(110)
 
     imgui.begin_disabled(self.ctrl is not None)
-    combo_preview_value = self.ports[self.sel_port_idx] if self.ports else "NONE"
+    combo_preview_value = port_display_name(self.ports[self.sel_port_idx]) if self.ports else "NONE"
     if imgui.begin_combo("##com_port_sel", combo_preview_value):
       self.ports = KoradSerial.scan_devices(0x0416, 0x5011)
       for idx, port in enumerate(self.ports):
         is_selected = self.sel_port_idx == idx
-        if imgui.selectable(port, is_selected):
+        if imgui.selectable(port_display_name(port), is_selected):
           self.sel_port_idx = idx
         if is_selected:
           imgui.set_item_default_focus()
@@ -61,7 +69,7 @@ class KoradGui:
 
   def options_ui(self):
     wnd_width = imgui.get_window_width()
-    imgui.push_font(self.big_font)
+    imgui.push_font(self.big_font, 40)
     imgui.set_cursor_pos(ImVec2(0, 10))
     output = self.ctrl.output if self.connected else False
     if widgets.text_sized_button("OFF" if output else "ON", "OFF", center=True, offset=self.mid_offset):
@@ -89,7 +97,7 @@ class KoradGui:
       self.ctrl.write_setpoint()
 
   def inputs_ui(self):
-    imgui.push_font(self.bigger_font)
+    imgui.push_font(self.bigger_font, 60)
     wnd_width = imgui.get_window_width()
     imgui.set_cursor_pos(ImVec2(wnd_width / 8 + self.mid_offset, 100))
     changed = False
@@ -121,13 +129,17 @@ class KoradGui:
         ticks = [format(tick, fmt).ljust(6) for tick in ticks]
         if len(ticks) == 1:
           ticks.append(ticks[0])  # bugfix
+        n_ticks = len(ticks) if self.connected else 0
         implot.setup_axis_ticks(
-          implot.ImAxis_.y1, 0.0, setpoint, len(ticks) if self.connected else 0, ticks, False)
+          implot.ImAxis_.y1, 0.0, setpoint, n_ticks, ticks if n_ticks else None, False)
 
         if self.connected and self.ctrl.output:
-          implot.tag_y(buffer.last_value, ImVec4(0, 1, 1, 5), format(buffer.last_value, fmt))
+          implot.tag_y(buffer.last_value, ImVec4(0, 1, 1, 1), format(buffer.last_value, fmt))
 
-        implot.plot_line("", buffer.timestamps, buffer.values, 0, buffer.offset)
+        spec = implot.Spec()
+        spec.size = buffer.length
+        spec.offset = buffer.offset
+        implot.plot_line("", buffer.timestamps, buffer.values, spec)
         implot.end_plot()
 
     if self.connected:
@@ -191,7 +203,7 @@ class KoradGui:
     return self.ctrl is not None
 
   def device_connect(self):
-    self.ctrl = PowerSupplyCtrl(None if 0 else KoradSerial(self.ports[self.sel_port_idx]))
+    self.ctrl = PowerSupplyCtrl(KoradSerial(self.ports[self.sel_port_idx]))
     self.ctrl.start()
     self.ctrl.lock = True
     self.ctrl.ocp = False
@@ -201,6 +213,7 @@ class KoradGui:
     self.ctrl.stream_output = True
 
   def device_disconnect(self):
+    self.output_last_set = -1
     if self.connected:
       self.ctrl.lock = False
       self.ctrl.output = False
@@ -209,15 +222,27 @@ class KoradGui:
       self.ctrl = None
 
   def start(self):
+    if getattr(sys, "frozen", False):
+      # cx_Freeze layout: <installdir>/<exe> with assets next to the exe or in lib/
+      exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+      candidates = (os.path.join(exe_dir, "assets"), os.path.join(exe_dir, "lib", "assets"))
+    else:
+      # source layout: <repo>/koradgui/ui.py -> <repo>/assets
+      candidates = (os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets"),)
+    assets_dir = next((c for c in candidates if os.path.isdir(c)), candidates[0])
+    hello_imgui.set_assets_folder(assets_dir)
+
     runner_params = hello_imgui.RunnerParams()
     runner_params.app_window_params.window_title = "koradGui"
     runner_params.app_window_params.window_geometry.size = (800, 550)
     runner_params.fps_idling.enable_idling = False
+    # Persist window layout/theme in the user config dir, not the current directory
+    runner_params.ini_folder_type = hello_imgui.IniFolderType.app_user_config_folder
     runner_params.callbacks.show_gui = self.app
     runner_params.callbacks.before_exit = self.device_disconnect
 
     def font_load():
-      robot_path = "assets/ttf/roboto/Roboto-Medium.ttf"
+      robot_path = hello_imgui.asset_file_full_path("ttf/roboto/Roboto-Medium.ttf")
       imgui.get_io().fonts.add_font_from_file_ttf(robot_path, 24)  # default font
       self.big_font = imgui.get_io().fonts.add_font_from_file_ttf(robot_path, 40)
       self.bigger_font = imgui.get_io().fonts.add_font_from_file_ttf(robot_path, 60)

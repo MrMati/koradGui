@@ -6,7 +6,7 @@ build_exe_options = {
      "excludes": ["tkinter", "unittest"],
      "optimize": 2,
      "zip_include_packages": ["*"],
-     "zip_exclude_packages": ["imgui_bundle"],
+     "zip_exclude_packages": ["imgui_bundle", "numpy", "koradgui"],
 }
 
 setup(
@@ -14,5 +14,6 @@ setup(
     version="0.1",
     description="koradGui",
     options={"build_exe": build_exe_options},
-    executables=[Executable("main.py", base="gui", target_name="koradGui", icon="icon")],
+    executables=[Executable("koradgui/main.py", base="gui", target_name="koradGui",
+                            icon="assets/app_settings/icon.png")],
 )

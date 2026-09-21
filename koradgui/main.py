@@ -1,5 +1,4 @@
-from ui import KoradGui
-import os
+from koradgui.ui import KoradGui
 import os
 
 

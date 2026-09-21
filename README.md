@@ -15,12 +15,16 @@ It should be compatible with all KA3xxxP, but has been tested only with KA3005P.
 
 GUI is built with Dear ImGui via imgui_bundle bindings.
 
-Distribution builds are created with cx-Freeze so they are not a single file.
-Adding Pyinstaller or other self-extraction solution should be trivial.
-
-Running the distribution build:
+Distribution is a **single-file AppImage** built with cx-Freeze
+(`bdist_appimage`). To build locally:
 
 ```bash
-python setup.py build
+uv sync
+uv run python setup.py bdist_appimage   # -> dist/koradgui-*.AppImage
+uv run python setup.py build_exe        # -> build/exe.*/koradGui (directory build)
 ```
+
+A GitHub Actions workflow (`.github/workflows/build.yml`) builds the AppImage
+in a manylinux_2_28 container (works on any distro with glibc >= 2.28), smoke
+tests it headlessly and attaches it to `v*` tag releases.
 
