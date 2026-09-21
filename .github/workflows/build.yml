@@ -68,8 +68,9 @@ jobs:
       - name: Smoke test AppImage
         run: |
           chmod +x artifacts/koradGui-AppImage/*.AppImage
-          xvfb-run -a timeout 20 artifacts/koradGui-AppImage/*.AppImage --appimage-extract-and-run
-          code=$?
+          # bash -e would abort on timeout's 124, so capture it explicitly
+          code=0
+          xvfb-run -a timeout 20 artifacts/koradGui-AppImage/*.AppImage --appimage-extract-and-run || code=$?
           # 124 = killed by timeout => app ran fine for 20s; 0 = clean exit
           if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
             echo "AppImage failed with exit code $code"
@@ -79,8 +80,8 @@ jobs:
       - name: Smoke test directory build
         run: |
           find artifacts/koradGui-dir -name koradGui -exec chmod +x {} \;
-          xvfb-run -a timeout 20 artifacts/koradGui-dir/exe.*/koradGui
-          code=$?
+          code=0
+          xvfb-run -a timeout 20 artifacts/koradGui-dir/exe.*/koradGui || code=$?
           if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
             echo "Directory build failed with exit code $code"
             exit 1
