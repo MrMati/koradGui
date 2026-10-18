@@ -44,7 +44,7 @@ class SpinBox:
 
   @value.setter
   def value(self, v: float):
-    v = min(v, self.max_value)
+    v = max(0.0, min(v, self.max_value))
     fmt = f"{{:0{self.n + 1}.{self.fract_places}f}}"
     s = fmt.format(v)
     s = s.replace('.', '')
@@ -132,4 +132,6 @@ class SpinBox:
     imgui.set_cursor_pos(ImVec2(widget_pos.x + self.n * (digit_size.x + spacing) + dot_offset, widget_pos.y))
     imgui.text(" " + self.unit)
 
+    if self.value > self.max_value:
+      self.value = self.max_value
     return changed

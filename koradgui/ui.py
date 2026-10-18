@@ -1,12 +1,13 @@
 import os
 import sys
 import time
+import math
 from typing import Optional, Any
 
 from imgui_bundle import immapp, implot, hello_imgui, imgui, ImVec2, ImVec4
 
 from .control import PowerSupplyCtrl, Event, CmdOption
-from .koradserial import KoradSerial
+from .devices import Family, scan_devices, selection_after_refresh, make_backend
 from .utils import ScrollingBuffer
 from . import widgets
 
@@ -20,12 +21,16 @@ def port_display_name(port: str) -> str:
 class KoradGui:
   def __init__(self):
     self.ctrl: Optional[PowerSupplyCtrl] = None
-    self.ports = KoradSerial.scan_devices(0x0416, 0x5011)
+    self.ports = scan_devices()
     self.sel_port_idx = 0 if self.ports else -1
     self.auto_set = True
     self.ocp_auto_set = False
     self.ovp_auto_set = False
     self.output_last_set = -1
+    self.last_scan = 0.0
+    self.error = ''
+    self.protection_values = {'ocp': 0.0, 'ovp': 0.0}
+    self.graph_epoch = time.monotonic()
 
     self.big_font: Optional[imgui.ImFont] = None
     self.bigger_font: Optional[imgui.ImFont] = None
@@ -40,20 +45,37 @@ class KoradGui:
     self.current_buffer = ScrollingBuffer(16 * 30)
 
   def connect_ui(self):
+    if self.ctrl is None and time.monotonic() - self.last_scan > 1.0:
+      previous = self.ports[self.sel_port_idx] if 0 <= self.sel_port_idx < len(self.ports) else None
+      self.ports = scan_devices()
+      self.sel_port_idx = selection_after_refresh(previous, self.ports)
+      self.last_scan = time.monotonic()
     imgui.set_cursor_pos(ImVec2(10, 10))
-    imgui.set_next_item_width(110)
+    imgui.set_next_item_width(120)
 
     imgui.begin_disabled(self.ctrl is not None)
-    combo_preview_value = port_display_name(self.ports[self.sel_port_idx]) if self.ports else "NONE"
-    if imgui.begin_combo("##com_port_sel", combo_preview_value):
-      self.ports = KoradSerial.scan_devices(0x0416, 0x5011)
-      for idx, port in enumerate(self.ports):
+    selected = self.ports[self.sel_port_idx] if 0 <= self.sel_port_idx < len(self.ports) else None
+    preview_pos = imgui.get_cursor_screen_pos() + imgui.get_style().frame_padding
+    preview_draw = imgui.get_window_draw_list()
+    if imgui.begin_combo("##com_port_sel", ''):
+      for idx, device in enumerate(self.ports):
         is_selected = self.sel_port_idx == idx
-        if imgui.selectable(port_display_name(port), is_selected):
+        row_pos = imgui.get_cursor_screen_pos()
+        clicked, _ = imgui.selectable(f'##port_{device.port}', is_selected)
+        self.draw_device_label(device, row_pos, imgui.get_window_draw_list())
+        if clicked:
           self.sel_port_idx = idx
         if is_selected:
           imgui.set_item_default_focus()
       imgui.end_combo()
+    if selected is None:
+      preview_draw.add_text(preview_pos, imgui.get_color_u32(imgui.Col_.text), 'NONE')
+    else:
+      preview_draw.push_clip_rect(preview_pos,
+        preview_pos + ImVec2(120 - imgui.get_style().frame_padding.x * 2 - imgui.get_frame_height(),
+                            imgui.get_text_line_height()), True)
+      self.draw_device_label(selected, preview_pos, preview_draw)
+      preview_draw.pop_clip_rect()
     imgui.end_disabled()
 
     imgui.set_cursor_pos(ImVec2(140, 10))
@@ -67,6 +89,54 @@ class KoradGui:
       if widgets.text_sized_button("DISCONNECT", "DISCONNECT"):
         self.device_disconnect()
 
+    if self.error:
+      imgui.set_cursor_pos(ImVec2(10, 53))
+      imgui.text_colored(ImVec4(1, 0.4, 0.3, 1), 'Device error (hover for details)')
+      if imgui.is_item_hovered():
+        imgui.set_tooltip(self.error)
+
+  @staticmethod
+  def draw_device_label(device, position, draw_list):
+    prefix = device.family.prefix
+    draw_list.add_text(position, imgui.get_color_u32(ImVec4(*device.family.color)), prefix)
+    draw_list.add_text(position + ImVec2(imgui.calc_text_size(prefix).x, 0),
+                       imgui.get_color_u32(imgui.Col_.text), device.label)
+
+  def protection_ui(self, wnd_width):
+    # Fixed positions in the original OCP/OVP area. Empty when disconnected;
+    # no layout reservation widgets that could move other controls.
+    if not self.connected:
+      return
+    if self.ctrl.family is Family.KORAD:
+      imgui.push_font(self.big_font, 40)
+      imgui.set_cursor_pos(ImVec2(wnd_width / 2 + 160, 10))
+      if widgets.switch_button('OCP', self.ocp_auto_set):
+        self.ocp_auto_set = not self.ocp_auto_set
+      imgui.set_cursor_pos(ImVec2(wnd_width / 2 + 270, 10))
+      if widgets.switch_button('OVP', self.ovp_auto_set):
+        self.ovp_auto_set = not self.ovp_auto_set
+      imgui.pop_font()
+      return
+    for name, x, unit, places in [('ocp', wnd_width / 2 + 150, 'A', 3),
+                                   ('ovp', wnd_width / 2 + 270, 'V', 2)]:
+      imgui.set_cursor_pos(ImVec2(x, 8))
+      imgui.text(name.upper() + ' ' + unit)
+      imgui.set_cursor_pos(ImVec2(x, 34))
+      imgui.set_next_item_width(110)
+      entered, value = imgui.input_float(f'##{name}_threshold', self.protection_values[name],
+                                         format=f'%.{places}f',
+                                         flags=imgui.InputTextFlags_.enter_returns_true)
+      self.protection_values[name] = value
+      if entered or imgui.is_item_deactivated_after_edit():
+        ceiling = getattr(self.ctrl.settings, name + '_ceiling')
+        actual = getattr(self.ctrl.settings, name + '_value')
+        if not math.isfinite(value) or not 0 < value <= ceiling:
+          self.error = f'{name.upper()} must be greater than zero and at most {ceiling:g} {unit}'
+          self.protection_values[name] = actual
+        elif abs(value - actual) > 10 ** (-places) / 2:
+          self.error = ''
+          self.ctrl.write_protection(name, value)
+
   def options_ui(self):
     wnd_width = imgui.get_window_width()
     imgui.push_font(self.big_font, 40)
@@ -74,22 +144,16 @@ class KoradGui:
     output = self.ctrl.output if self.connected else False
     if widgets.text_sized_button("OFF" if output else "ON", "OFF", center=True, offset=self.mid_offset):
       self.ctrl.output = not output
-      self.ctrl.write_all()
+      self.ctrl.voltage = self.voltage_input.value
+      self.ctrl.current = self.current_input.value
+      if self.ctrl.family is Family.FNIRSI and not self.ctrl.output:
+        self.ctrl.write_custom({CmdOption.STATUS})
+      else:
+        self.ctrl.write_all()
       self.output_last_set = time.time()
 
-    imgui.push_style_var(imgui.StyleVar_.disabled_alpha, 1.0 if self.connected else 0.6)
-
-    imgui.set_cursor_pos(ImVec2(wnd_width / 2 + 160, 10))
-    if widgets.switch_button("OCP", self.ocp_auto_set):
-      self.ocp_auto_set = not self.ocp_auto_set
-
-    imgui.set_cursor_pos(ImVec2(wnd_width / 2 + 270, 10))
-    if widgets.switch_button("OVP", self.ovp_auto_set):
-      self.ovp_auto_set = not self.ovp_auto_set
-
-    imgui.pop_style_var()
-
     imgui.pop_font()
+    self.protection_ui(wnd_width)
 
     imgui.set_cursor_pos(ImVec2(imgui.get_window_size()[0] / 2 - 40 + self.mid_offset, 100))
     auto_changed, self.auto_set = imgui.checkbox("AUTO", self.auto_set)
@@ -146,11 +210,9 @@ class KoradGui:
 
     if self.connected:
       self.time += imgui.get_io().delta_time
-      # self.voltage_buffer.append(self.t, np.sin(self.t))
-      if data := self.ctrl.read_output_data():
-        assert (len(data) == 1)  # It seems there is always one data point
-        self.voltage_buffer.append(self.time, data[0][0])
-        self.current_buffer.append(self.time, data[0][1])
+      for timestamp, voltage, current in self.ctrl.read_output_data():
+        self.voltage_buffer.append(timestamp - self.graph_epoch, voltage)
+        self.current_buffer.append(timestamp - self.graph_epoch, current)
 
     imgui.set_cursor_pos(ImVec2(20, 200))
     if implot.begin_subplots("Outputs", 1, 2, ImVec2(-1, -1), flags=implot.SubplotFlags_.no_title):
@@ -164,7 +226,7 @@ class KoradGui:
         self.graph_zoom = min(30.0, max(1.0, self.graph_zoom))
 
   def app(self):
-    if self.connected and (event := self.ctrl.read_event()):
+    while self.ctrl is not None and (event := self.ctrl.read_event()):
       self.callback(*event)
 
     self.prot_auto_set()
@@ -183,13 +245,36 @@ class KoradGui:
     imgui.pop_style_var(1)
 
   def callback(self, event: Event, data: Any):
-    if event is Event.READ_FINISHED:
+    if event in (Event.READ_FINISHED, Event.READY):
+      self.update_limits()
       self.voltage_input.value = self.ctrl.voltage
       self.current_input.value = self.ctrl.current
+      self.protection_values = {'ocp': self.ctrl.settings.ocp_value, 'ovp': self.ctrl.settings.ovp_value}
+      if event is Event.READY:
+        self.graph_epoch = time.monotonic()
+        self.time = 0
+        self.voltage_buffer = ScrollingBuffer(16 * 30)
+        self.current_buffer = ScrollingBuffer(16 * 30)
+        self.ctrl.stream_output = True
+    elif event is Event.STATE_UPDATED:
+      self.update_limits()
+    elif event is Event.PROTECTION_FINISHED:
+      self.protection_values = {'ocp': self.ctrl.settings.ocp_value, 'ovp': self.ctrl.settings.ovp_value}
+    elif event is Event.ERROR:
+      self.error = str(data)
     elif event is Event.DISCONNECTED:
+      self.error = str(data)
       self.device_disconnect(send_off=False)
 
+  def update_limits(self):
+    settings = self.ctrl.settings
+    self.voltage_input.max_value = math.floor(settings.max_voltage * 100 + 1e-5) / 100
+    self.current_input.max_value = math.floor(settings.max_current * 1000 + 1e-5) / 1000
+
   def prot_auto_set(self):
+    if not self.connected or self.ctrl.family is Family.FNIRSI:
+      self.output_last_set = -1
+      return
     if self.output_last_set > 0 and time.time() - self.output_last_set > 1:
       if self.ctrl.output:
         self.ctrl.ocp = self.ocp_auto_set
@@ -202,26 +287,22 @@ class KoradGui:
 
   @property
   def connected(self) -> bool:
-    return self.ctrl is not None
+    return self.ctrl is not None and self.ctrl.ready
 
   def device_connect(self):
-    self.ctrl = PowerSupplyCtrl(KoradSerial(self.ports[self.sel_port_idx]))
+    if not 0 <= self.sel_port_idx < len(self.ports):
+      return
+    self.error = ''
+    self.ctrl = PowerSupplyCtrl(make_backend(self.ports[self.sel_port_idx]))
     self.ctrl.start()
-    self.ctrl.lock = True
-    self.ctrl.ocp = False
-    self.ctrl.ovp = False
-    self.ctrl.write_custom({CmdOption.LOCK, CmdOption.STATUS})
-    self.ctrl.read_settings()
-    self.ctrl.stream_output = True
 
   def device_disconnect(self, send_off: bool = True):
     self.output_last_set = -1
-    if self.connected:
-      if send_off:
-        self.ctrl.lock = False
-        self.ctrl.output = False
-        self.ctrl.write_all()
-      self.ctrl.close()
+    if self.ctrl is not None:
+      self.ctrl.close(send_off=send_off)
+      while event := self.ctrl.read_event():
+        if event[0] is Event.ERROR:
+          self.error = str(event[1])
       self.ctrl = None
 
   def start(self):

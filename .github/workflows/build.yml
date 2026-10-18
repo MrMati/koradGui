@@ -40,6 +40,9 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
 
+      - name: Test protocols and headless GUI
+        run: uv run python -m unittest discover -s tests -v
+
       - name: Build AppImage
         run: uv run python setup.py bdist_appimage
 
